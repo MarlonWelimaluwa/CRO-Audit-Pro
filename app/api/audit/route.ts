@@ -156,7 +156,7 @@ async function fetchPageSpeed(url: string): Promise<PageSpeedData> {
     }
 
     // Extract page metadata from lighthouse
-    const lhr = desktop?.lighthouseResult || {};
+    const lhr = (desktop?.lighthouseResult || {}) as Record<string, unknown>;
     const audits = (lhr.audits as Record<string, unknown>) || {};
     const titleAudit = (audits['document-title'] as Record<string, unknown>) || {};
     const metaAudit = (audits['meta-description'] as Record<string, unknown>) || {};
