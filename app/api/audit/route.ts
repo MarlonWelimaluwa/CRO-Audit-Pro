@@ -108,6 +108,8 @@ interface PageSpeedData {
 
 async function fetchPageSpeed(url: string): Promise<PageSpeedData> {
     const API = process.env.PAGESPEED_API_KEY || '';
+    if (!API) throw new Error('PAGESPEED_API_KEY is not configured in environment variables. Please add it in Vercel settings.');
+
     const base = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${API}`;
 
     const [desktopRes, mobileRes] = await Promise.all([
@@ -115,7 +117,25 @@ async function fetchPageSpeed(url: string): Promise<PageSpeedData> {
         fetch(`${base}&strategy=mobile`),
     ]);
 
-    const [desktop, mobile] = await Promise.all([desktopRes.json(), mobileRes.json()]);
+    // Check for non-JSON responses (API errors, HTML error pages)
+    const desktopText = await desktopRes.text();
+    const mobileText = await mobileRes.text();
+
+    let desktop: Record<string, unknown> = {};
+    let mobile: Record<string, unknown> = {};
+
+    try { desktop = JSON.parse(desktopText); } catch {
+        throw new Error('PageSpeed API returned invalid response. Check your PAGESPEED_API_KEY is valid and the URL is accessible.');
+    }
+    try { mobile = JSON.parse(mobileText); } catch {
+        throw new Error('PageSpeed API returned invalid response for mobile. Check your PAGESPEED_API_KEY is valid.');
+    }
+
+    // Check for API-level errors
+    if ((desktop as Record<string, unknown>).error) {
+        const errMsg = ((desktop as Record<string, {message?: string}>).error as {message?: string})?.message || 'PageSpeed API error';
+        throw new Error(`PageSpeed API error: ${errMsg}`);
+    }
 
     function getScore(d: Record<string, unknown>): number {
         return Math.round(((d?.lighthouseResult as Record<string, unknown>)?.categories as Record<string, unknown>)?.performance as unknown as number * 100) || 0;
