@@ -131,7 +131,7 @@ Phone Numbers: ${(s.phones || []).join(', ') || 'None'}
 Email Addresses: ${(s.emails || []).join(', ') || 'None'}
 Forms on page: ${s.forms?.count || 0} forms, ${s.forms?.inputs || 0} input fields
 Prices shown: ${s.trust?.hasPrices ? 'YES' : 'NO'}
-Testimonials present: ${s.trust?.hasTestimonials ? 'YES' : 'NO'}
+Testimonials present: ${s.trust?.hasTestimonials ? 'YES' : 'NO'} | Named testimonials confirmed: ${(s.trust as Record<string,unknown>)?.hasNamedTestimonials ? 'YES - mark as PASS' : 'NO'}
 Review count mentioned: ${s.trust?.reviewCount || 'None'}
 Certification/Awards: ${s.trust?.hasCertification ? 'YES' : 'NO'}
 WhatsApp button: ${s.trust?.hasWhatsapp ? 'YES' : 'NO'}

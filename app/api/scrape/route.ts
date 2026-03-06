@@ -42,21 +42,24 @@ export async function POST(req: NextRequest) {
         const h2s = extractAll(/<h2[^>]*>([\s\S]*?)<\/h2>/i, html);
         const h3s = extractAll(/<h3[^>]*>([\s\S]*?)<\/h3>/i, html).slice(0, 8);
 
-        // CTAs — buttons and links with action words
+        // CTAs — buttons AND <a> tags (most sites use anchor tags styled as buttons)
         const allButtons = extractAll(/<button[^>]*>([\s\S]*?)<\/button>/i, html);
-        const allLinks = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, html);
-        const ctaKeywords = /book|buy|get|start|try|join|sign|subscribe|contact|appointment|order|shop|call|quote|free|now|today/i;
-        const ctaButtons = allButtons.filter(b => ctaKeywords.test(b)).slice(0, 8);
-        const ctaLinks = allLinks.filter(l => ctaKeywords.test(l)).slice(0, 8);
+        const allAnchors = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, html);
+        const ctaKeywords = /book|buy|get|start|try|join|sign|subscribe|contact|appointment|order|shop|call|quote|free|now|today|view|explore|learn|discover/i;
+        const ctaButtons = [...allButtons, ...allAnchors.filter(a => {
+            const lc = a.toLowerCase();
+            return ctaKeywords.test(lc) && lc.length > 2 && lc.length < 60;
+        })].filter((v,i,arr)=>arr.indexOf(v)===i).slice(0, 10);
+        const ctaLinks = allAnchors.filter(l => ctaKeywords.test(l)).slice(0, 8);
 
         // Nav items
         const navSection = html.match(/<nav[^>]*>([\s\S]*?)<\/nav>/i)?.[1] || '';
         const navItems = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, navSection).slice(0, 12);
 
         // Phone numbers
-        const phones = html.match(/(\+?[\d\s\-\(\)]{7,20})/g)
-            ?.filter(p => p.replace(/\D/g, '').length >= 7)
-            .slice(0, 3) || [];
+        const phones = (html.match(/(\+\d[\d\s\-()]{5,13}\d|0\d[\d\s\-()]{5,13}\d)/g) || [])
+            .filter(p => { const d = p.replace(/\D/g,''); return d.length >= 7 && d.length <= 15; })
+            .map(p => p.trim()).filter((p,i,a) => a.indexOf(p)===i).slice(0, 3);
 
         // Emails
         const emails = html.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g)?.slice(0, 2) || [];
@@ -69,6 +72,7 @@ export async function POST(req: NextRequest) {
         // Trust signals
         const hasPrices = /rs\.?\s*[\d,]+|lkr|usd|\$|£|€|price|pricing/i.test(html);
         const hasTestimonials = /testimonial|review|client said|customer said|what.*say/i.test(html);
+        const hasNamedTestimonials = /Google Review|Trustpilot|verified buyer/i.test(html);
         const hasReviewCount = html.match(/[\d,]+\+?\s*(reviews?|ratings?|customers?|clients?)/i)?.[0] || '';
         const hasCertification = /iso|certified|award|accredited/i.test(html);
         const hasWhatsapp = /whatsapp/i.test(html);
@@ -120,6 +124,7 @@ export async function POST(req: NextRequest) {
                 trust: {
                     hasPrices,
                     hasTestimonials,
+                    hasNamedTestimonials,
                     reviewCount: hasReviewCount,
                     hasCertification,
                     hasWhatsapp,
