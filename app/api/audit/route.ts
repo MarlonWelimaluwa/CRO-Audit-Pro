@@ -212,7 +212,7 @@ async function callGemini(system: string, user: string): Promise<string> {
             body: JSON.stringify({
                 systemInstruction: { parts: [{ text: system }] },
                 contents: [{ role: 'user', parts: [{ text: user }] }],
-                generationConfig: { temperature: 0.25, maxOutputTokens: 16000, responseMimeType: 'application/json' },
+                generationConfig: { temperature: 0.2, maxOutputTokens: 8000, responseMimeType: 'application/json' },
             }),
         }
     );
@@ -382,8 +382,107 @@ Return ONLY this JSON (no markdown, no extra text):
   ]
 }`;
 
-        const raw = await callGemini(CRO_SYSTEM, userPrompt);
-        const parsed = JSON.parse(raw);
+        // Call 1: scores, summary, critical issues, top fixes, action plan
+        const prompt1 = userPrompt + `
+
+IMPORTANT: In this first call, return ONLY this subset of the full JSON — no audit arrays:
+{
+  "url": "${url}",
+  "auditDate": "${auditDate}",
+  "pageTitle": "${psData.pageTitle || 'Not detected'}",
+  "industry": "detect from URL",
+  "overallScore": 50,
+  "grade": "F",
+  "speedScore": ${Math.round((psData.desktopScore + psData.mobileScore) / 2)},
+  "trustScore": 45,
+  "mobileScore": ${psData.mobileScore},
+  "uxScore": 45,
+  "copyScore": 45,
+  "ctaScore": 40,
+  "summary": "2-3 brutally honest sentences using real data: mobile ${psData.mobileScore}/100, LCP ${psData.lcp}",
+  "conversionImpact": "specific revenue/lead estimate based on real scores",
+  "speedMetrics": {
+    "desktop": ${psData.desktopScore},
+    "mobile": ${psData.mobileScore},
+    "lcp": "${psData.lcp}",
+    "cls": "${psData.cls}",
+    "fcp": "${psData.fcp}",
+    "ttfb": "${psData.ttfb}",
+    "loadTime": "${psData.loadTime}",
+    "pageSize": "${psData.pageSize}"
+  },
+  "criticalIssues": [
+    {"title": "most critical issue", "where": "exact location", "impact": "specific impact with numbers", "fix": "exact fix"},
+    {"title": "second issue", "where": "exact location", "impact": "specific impact", "fix": "exact fix"},
+    {"title": "third issue", "where": "exact location", "impact": "specific impact", "fix": "exact fix"}
+  ],
+  "topFixes": ["fix1 with real data", "fix2", "fix3", "fix4", "fix5"],
+  "actionPlan": {
+    "today": ["action1", "action2", "action3"],
+    "thisWeek": ["action1", "action2", "action3"],
+    "thisMonth": ["action1", "action2", "action3"]
+  },
+  "passed": [{"item": "something good", "why": "why it helps conversion"}]
+}`;
+
+        // Call 2: all detailed audit arrays
+        const prompt2 = userPrompt + `
+
+IMPORTANT: In this second call, return ONLY the audit arrays — nothing else:
+{
+  "aboveFoldAudit": [
+    {"item": "Headline Clarity", "status": "fail|warn|pass", "found": "what detected", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Value Proposition", "status": "fail|warn|pass", "found": "what detected", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Primary CTA Visibility", "status": "fail|warn|pass", "found": "what detected", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Hero Visual", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Navigation Clarity", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"}
+  ],
+  "ctaAudit": [
+    {"item": "CTA Button Copy", "status": "fail|warn|pass", "found": "what detected", "problem": "exact problem", "fix": "exact copy to use"},
+    {"item": "CTA Button Design", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "CTA Placement", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Anxiety Reducers", "status": "fail", "found": "none detected", "problem": "no micro-copy reducing friction", "fix": "add: No credit card required / Free consultation / Cancel anytime"},
+    {"item": "Form Friction", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"}
+  ],
+  "trustAudit": [
+    {"item": "Testimonials & Reviews", "status": "fail|warn|pass", "found": "what detected", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Social Proof Numbers", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Trust Badges", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Contact Information", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "HTTPS & Security", "status": "${psData.hasHttps ? 'pass' : 'fail'}", "found": "${psData.hasHttps ? 'HTTPS enabled' : 'No HTTPS'}", "problem": "${psData.hasHttps ? 'Site is secure' : 'No SSL — browsers warn visitors site is not secure'}", "fix": "${psData.hasHttps ? 'Maintain HTTPS on all resources' : 'Install SSL immediately via host or Cloudflare free SSL'}"}
+  ],
+  "mobileAudit": [
+    {"item": "Mobile Speed", "status": "${psData.mobileScore >= 80 ? 'pass' : psData.mobileScore >= 50 ? 'warn' : 'fail'}", "found": "Score: ${psData.mobileScore}/100, LCP: ${psData.lcp}", "problem": "${psData.mobileScore < 50 ? 'Score ' + psData.mobileScore + ' is critically slow — 53% of mobile visitors leave before page loads' : 'Score ' + psData.mobileScore + ' is below 80 target'}", "fix": "Compress images to WebP under 100KB, enable lazy loading, remove unused JS"},
+    {"item": "Touch Targets", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Mobile Navigation", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Mobile Forms", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Mobile CTA", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"}
+  ],
+  "copyAudit": [
+    {"item": "Headline Formula", "status": "warn", "found": "${psData.pageTitle || 'not detected'}", "problem": "exact headline problem", "fix": "rewrite: [Outcome] + [Timeframe] + [Handle] with example"},
+    {"item": "Benefit vs Feature Focus", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "rewrite example"},
+    {"item": "Specificity & Numbers", "status": "warn", "found": "assessment", "problem": "vague claims without numbers", "fix": "replace with specific numbers and results"},
+    {"item": "Objection Handling", "status": "fail", "found": "assessment", "problem": "top objections not addressed", "fix": "add FAQ with top 5 objections"},
+    {"item": "Urgency & Scarcity", "status": "warn", "found": "assessment", "problem": "no urgency triggers", "fix": "add honest urgency: limited spots, price date, etc"}
+  ],
+  "uxAudit": [
+    {"item": "Page Speed UX", "status": "${psData.mobileScore >= 80 ? 'pass' : psData.mobileScore >= 50 ? 'warn' : 'fail'}", "found": "LCP ${psData.lcp}, CLS ${psData.cls}, ${psData.pageSize}", "problem": "exact UX impact of these metrics", "fix": "fix: ${psData.opportunities.slice(0,2).join(', ')}"},
+    {"item": "Visual Hierarchy", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Readability", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Content Flow", "status": "warn", "found": "assessment", "problem": "exact problem", "fix": "exact fix"},
+    {"item": "Exit Intent", "status": "fail", "found": "none detected", "problem": "no exit intent — losing 100% of abandoning visitors", "fix": "add exit intent popup with lead magnet using Hotjar or OptinMonster"}
+  ]
+}`;
+
+        // Run both calls in parallel
+        const [raw1, raw2] = await Promise.all([
+            callGemini(CRO_SYSTEM, prompt1),
+            callGemini(CRO_SYSTEM, prompt2),
+        ]);
+
+        const part1 = JSON.parse(raw1);
+        const part2 = JSON.parse(raw2);
+        const parsed = { ...part1, ...part2 };
 
         // Hard overrides with real PageSpeed data
         parsed.speedMetrics = {
