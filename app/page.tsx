@@ -92,11 +92,11 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('overview');
 
   const loadingSteps = [
-    'Crawling page structure...',
-    'Running PageSpeed analysis...',
-    'Auditing CTAs & trust signals...',
-    'Analysing copy & UX patterns...',
-    'Generating conversion recommendations...',
+    'Fetching desktop PageSpeed score...',
+    'Fetching mobile PageSpeed score...',
+    'Analysing Core Web Vitals...',
+    'Running AI conversion audit...',
+    'Generating action plan...',
   ];
 
   async function runAudit() {
@@ -104,20 +104,35 @@ export default function Home() {
     let clean = url.trim();
     if (!clean.startsWith('http')) clean = 'https://' + clean;
     setLoading(true); setError(''); setResult(null); setLoadingStep(0);
-    const iv = setInterval(() => setLoadingStep(s => Math.min(s + 1, loadingSteps.length - 1)), 2800);
     try {
-      const res = await fetch('/api/audit', {
+      // Step 1: PageSpeed (desktop + mobile) - dedicated fast route ~15s
+      setLoadingStep(0);
+      const speedRes = await fetch('/api/speed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: clean }),
       });
-      const data = await res.json();
-      clearInterval(iv);
-      if (!data.ok) throw new Error(data.error || 'Audit failed');
-      setResult(data.data);
+      const speedData = await speedRes.json();
+      if (!speedData.ok) throw new Error(speedData.error || 'PageSpeed fetch failed');
+
+      setLoadingStep(2);
+
+      // Step 2: AI Audit - receives speed data, runs Gemini only ~20s
+      const auditDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      setLoadingStep(3);
+
+      const auditRes = await fetch('/api/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: clean, psData: speedData.data, auditDate }),
+      });
+      const auditData = await auditRes.json();
+      setLoadingStep(4);
+
+      if (!auditData.ok) throw new Error(auditData.error || 'Audit failed');
+      setResult(auditData.data);
       setActiveTab('overview');
     } catch (e: unknown) {
-      clearInterval(iv);
       setError(e instanceof Error ? e.message : 'Audit failed. Check the URL and try again.');
     }
     setLoading(false);
