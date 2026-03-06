@@ -127,6 +127,7 @@ H3 Headlines: ${(s.h3s || []).join(' | ') || 'None detected'}
 Navigation Items: ${(s.navItems || []).join(', ') || 'None detected'}
 CTA Buttons found: ${(s.ctaButtons || []).join(', ') || 'None detected'}
 CTA Links found: ${(s.ctaLinks || []).join(', ') || 'None detected'}
+ALL CTAs combined (use this for assessment): ${[...(s.ctaButtons||[]), ...(s.ctaLinks||[])].filter((v,i,a)=>a.indexOf(v)===i).join(', ') || 'None detected'}
 Phone Numbers: ${(s.phones || []).join(', ') || 'None'}
 Email Addresses: ${(s.emails || []).join(', ') || 'None'}
 Forms on page: ${s.forms?.count || 0} forms, ${s.forms?.inputs || 0} input fields
