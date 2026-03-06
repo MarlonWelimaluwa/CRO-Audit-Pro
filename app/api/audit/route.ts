@@ -54,7 +54,7 @@ async function callGemini(system: string, user: string, retries = 3): Promise<st
                     body: JSON.stringify({
                         systemInstruction: { parts: [{ text: system }] },
                         contents: [{ role: 'user', parts: [{ text: user }] }],
-                        generationConfig: { temperature: 0.2, maxOutputTokens: 8000, responseMimeType: 'application/json' },
+                        generationConfig: { temperature: 0.2, maxOutputTokens: 4000 },
                     }),
                 }
             );
