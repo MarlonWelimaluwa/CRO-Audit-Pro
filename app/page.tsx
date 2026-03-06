@@ -161,13 +161,28 @@ export default function Home() {
         hasHttps,
       };
 
-      // Step 2: Gemini audit — runs on Vercel, only ~20s, well within 60s limit
+      // Step 2: Scrape real HTML from browser — no Vercel timeout
+      setLoadingStep(2);
+      let siteData = {};
+      try {
+        const scrapeRes = await fetch('/api/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: clean }),
+        });
+        const scrapeJson = await scrapeRes.json();
+        if (scrapeJson.ok) siteData = scrapeJson.data;
+      } catch (e) {
+        console.warn('Scrape failed, continuing:', e);
+      }
+
+      // Step 3: Gemini audit — ONLY Gemini runs on Vercel now (~20s max)
       setLoadingStep(3);
       const auditDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
       const auditRes = await fetch('/api/audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: clean, psData, auditDate }),
+        body: JSON.stringify({ url: clean, psData, siteData, auditDate }),
       });
       const auditData = await auditRes.json();
       setLoadingStep(4);

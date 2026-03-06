@@ -93,23 +93,11 @@ async function callGemini(system: string, user: string, retries = 3): Promise<st
 
 export async function POST(req: NextRequest) {
     try {
-        const { url, psData, auditDate } = await req.json();
+        const { url, psData, siteData: rawSiteData, auditDate } = await req.json();
         if (!url || !psData) return NextResponse.json({ ok: false, error: 'url and psData required' }, { status: 400 });
 
-        // Scrape real page content so Gemini audits the ACTUAL site
-        let siteData: Record<string, unknown> = {};
-        try {
-            const baseUrl = req.nextUrl.origin;
-            const scrapeRes = await fetch(`${baseUrl}/api/scrape`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url }),
-            });
-            const scrapeJson = await scrapeRes.json();
-            if (scrapeJson.ok) siteData = scrapeJson.data;
-        } catch (e) {
-            console.error('Scrape failed, continuing without:', e);
-        }
+        // siteData comes from browser — no server-side scrape needed, saves ~15s
+        const siteData: Record<string, unknown> = rawSiteData || {};
 
         const s = siteData as {
             title?: string; metaDesc?: string; h1s?: string[]; h2s?: string[];
