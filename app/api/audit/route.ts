@@ -40,35 +40,55 @@ function extractJSON(text: string): string {
     }
 }
 
-async function callGemini(system: string, user: string): Promise<string> {
+async function callGemini(system: string, user: string, retries = 3): Promise<string> {
     const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
     if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY not set');
 
-    const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                systemInstruction: { parts: [{ text: system }] },
-                contents: [{ role: 'user', parts: [{ text: user }] }],
-                generationConfig: { temperature: 0.2, maxOutputTokens: 8000, responseMimeType: 'application/json' },
-            }),
-        }
-    );
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const res = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        systemInstruction: { parts: [{ text: system }] },
+                        contents: [{ role: 'user', parts: [{ text: user }] }],
+                        generationConfig: { temperature: 0.2, maxOutputTokens: 8000, responseMimeType: 'application/json' },
+                    }),
+                }
+            );
 
-    const rawText = await res.text();
-    let d: Record<string, unknown>;
-    try { d = JSON.parse(rawText); } catch {
-        throw new Error(`Gemini returned non-JSON. Status: ${res.status}`);
+            const rawText = await res.text();
+            let d: Record<string, unknown>;
+            try { d = JSON.parse(rawText); } catch {
+                throw new Error(`Gemini returned non-JSON. Status: ${res.status}`);
+            }
+
+            // If overloaded, wait and retry
+            if (d.error) {
+                const errMsg = (d.error as Record<string, string>)?.message || '';
+                const isOverloaded = res.status === 503 || errMsg.toLowerCase().includes('overloaded') || errMsg.toLowerCase().includes('high demand');
+                if (isOverloaded && attempt < retries) {
+                    console.log(`Gemini overloaded, retry ${attempt}/${retries} in 3s...`);
+                    await new Promise(r => setTimeout(r, 3000 * attempt));
+                    continue;
+                }
+                throw new Error(`Gemini error: ${errMsg}`);
+            }
+
+            const raw = ((d.candidates as Record<string, unknown>[])?.[0]?.content as Record<string, unknown>);
+            const text = (raw?.parts as Record<string, unknown>[])?.[0]?.text as string || '';
+            if (!text) throw new Error('Gemini returned empty response');
+            return extractJSON(text);
+
+        } catch (e) {
+            if (attempt === retries) throw e;
+            console.log(`Gemini attempt ${attempt} failed, retrying...`);
+            await new Promise(r => setTimeout(r, 2000 * attempt));
+        }
     }
-    if (d.error) {
-        throw new Error(`Gemini error: ${(d.error as Record<string, string>)?.message || JSON.stringify(d.error)}`);
-    }
-    const raw = ((d.candidates as Record<string, unknown>[])?.[0]?.content as Record<string, unknown>);
-    const text = (raw?.parts as Record<string, unknown>[])?.[0]?.text as string || '';
-    if (!text) throw new Error('Gemini returned empty response');
-    return extractJSON(text);
+    throw new Error('Gemini failed after all retries');
 }
 
 export async function POST(req: NextRequest) {
