@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
             while ((m = re.exec(src)) !== null) {
                 const val = m[group].replace(/<[^>]+>/g, '').trim();
                 if (val && val.length > 2 && val.length < 200) results.push(val);
-                if (results.length >= 15) break;
+                if (results.length >= 50) break;
             }
             return [...new Set(results)];
         }
@@ -42,15 +42,25 @@ export async function POST(req: NextRequest) {
         const h2s = extractAll(/<h2[^>]*>([\s\S]*?)<\/h2>/i, html);
         const h3s = extractAll(/<h3[^>]*>([\s\S]*?)<\/h3>/i, html).slice(0, 8);
 
-        // CTAs — buttons AND <a> tags (most sites use anchor tags styled as buttons)
-        const allButtons = extractAll(/<button[^>]*>([\s\S]*?)<\/button>/i, html);
-        const allAnchors = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, html);
+        // CTAs — scan ALL buttons and anchor tags, no early limit
         const ctaKeywords = /book|buy|get|start|try|join|sign|subscribe|contact|appointment|order|shop|call|quote|free|now|today|view|explore|learn|discover/i;
-        const ctaButtons = [...allButtons, ...allAnchors.filter(a => {
-            const lc = a.toLowerCase();
-            return ctaKeywords.test(lc) && lc.length > 2 && lc.length < 60;
-        })].filter((v,i,arr)=>arr.indexOf(v)===i).slice(0, 10);
-        const ctaLinks = allAnchors.filter(l => ctaKeywords.test(l)).slice(0, 8);
+        const allButtonMatches: string[] = [];
+        const allAnchorTexts: string[] = [];
+        let bm; const btnRe = /<button[^>]*>([\s\S]*?)<\/button>/gi;
+        while ((bm = btnRe.exec(html)) !== null) {
+            const v = bm[1].replace(/<[^>]+>/g, '').trim();
+            if (v && v.length > 1 && v.length < 80) allButtonMatches.push(v);
+        }
+        let am; const ancRe = /<a[^>]*>([\s\S]*?)<\/a>/gi;
+        while ((am = ancRe.exec(html)) !== null) {
+            const v = am[1].replace(/<[^>]+>/g, '').trim();
+            if (v && v.length > 1 && v.length < 80) allAnchorTexts.push(v);
+        }
+        const ctaButtons = [...new Set([
+            ...allButtonMatches.filter(b => ctaKeywords.test(b)),
+            ...allAnchorTexts.filter(a => ctaKeywords.test(a) && a.length < 40)
+        ])].slice(0, 12);
+        const ctaLinks = [...new Set(allAnchorTexts.filter(l => ctaKeywords.test(l)))].slice(0, 10);
 
         // Nav items
         const navSection = html.match(/<nav[^>]*>([\s\S]*?)<\/nav>/i)?.[1] || '';
