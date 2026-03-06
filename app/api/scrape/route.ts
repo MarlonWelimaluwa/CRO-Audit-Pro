@@ -68,7 +68,14 @@ export async function POST(req: NextRequest) {
 
         // Phone numbers
         const phones = (html.match(/(\+\d[\d\s\-()]{5,13}\d|0\d[\d\s\-()]{5,13}\d)/g) || [])
-            .filter(p => { const d = p.replace(/\D/g,''); return d.length >= 7 && d.length <= 15; })
+            .filter(p => {
+                const d = p.replace(/\D/g,'');
+                if (d.length < 7 || d.length > 15) return false;
+                // Reject tracking/pixel IDs: no formatting chars AND over 10 digits
+                const hasFormatting = /[\s\-().+]/.test(p.trim());
+                if (!hasFormatting && d.length > 10) return false;
+                return true;
+            })
             .map(p => p.trim()).filter((p,i,a) => a.indexOf(p)===i).slice(0, 3);
 
         // Emails
@@ -83,7 +90,7 @@ export async function POST(req: NextRequest) {
         const hasPrices = /rs\.?\s*[\d,]+|lkr|usd|\$|£|€|price|pricing/i.test(html);
         const hasTestimonials = /testimonial|review|client said|customer said|what.*say/i.test(html);
         const hasNamedTestimonials = /Google Review|Trustpilot|verified buyer/i.test(html);
-        const hasReviewCount = html.match(/[\d,]+\+?\s*(reviews?|ratings?|customers?|clients?)/i)?.[0] || '';
+        const hasReviewCount = html.match(/[\d,]+\+?\s*(glowing\s*)?(google\s*)?(reviews?|ratings?|customers?|clients?)/i)?.[0] || '';
         const hasCertification = /iso|certified|award|accredited/i.test(html);
         const hasWhatsapp = /whatsapp/i.test(html);
         const hasLiveChat = /livechat|live.chat|tawk|intercom|drift|crisp|zendesk/i.test(html);
