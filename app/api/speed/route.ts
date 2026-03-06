@@ -10,9 +10,8 @@ export async function POST(req: NextRequest) {
         const API = process.env.PAGESPEED_API_KEY || '';
         if (!API) return NextResponse.json({ ok: false, error: 'PAGESPEED_API_KEY not set' }, { status: 500 });
 
-        // fields param = only fetch what we need, 90% smaller response = 3-4x faster
-        const fields = 'lighthouseResult(categories,audits(largest-contentful-paint,cumulative-layout-shift,first-contentful-paint,server-response-time,interactive,total-byte-weight,is-on-https,document-title,heading-order,render-blocking-resources,uses-optimized-images,uses-webp-images,unused-javascript,unused-css-rules,uses-responsive-images))';
-        const base = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${API}&fields=${encodeURIComponent(fields)}`;
+        // category=performance only — skips accessibility/seo/pwa audits, much faster
+        const base = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${API}&category=performance`;
 
         // Both desktop + mobile in parallel
         const [desktopRes, mobileRes] = await Promise.all([
@@ -51,10 +50,9 @@ export async function POST(req: NextRequest) {
         }
         function getOpportunities(d: Record<string, unknown>): string[] {
             const audits = ((d?.lighthouseResult as Record<string, unknown>)?.audits as Record<string, unknown>) || {};
-            const known = ['render-blocking-resources','uses-optimized-images','uses-webp-images','unused-javascript','unused-css-rules','uses-responsive-images'];
-            return known
-                .filter(k => audits[k] && Number((audits[k] as Record<string, unknown>)?.score ?? 1) < 0.9)
-                .map(k => (audits[k] as Record<string, unknown>)?.title as string)
+            return Object.values(audits)
+                .filter((a) => (a as Record<string, unknown>).details && (a as Record<string, unknown>).score !== null && Number((a as Record<string, unknown>).score) < 0.9)
+                .map((a) => (a as Record<string, unknown>).title as string)
                 .filter(Boolean)
                 .slice(0, 6);
         }
