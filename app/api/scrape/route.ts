@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
 
         const html = await res.text();
 
+        // Extract key CRO signals from raw HTML
         function extract(pattern: RegExp, src: string, group = 1): string {
             const m = src.match(pattern);
             return m ? m[group].replace(/<[^>]+>/g, '').trim() : '';
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
         const h2s = extractAll(/<h2[^>]*>([\s\S]*?)<\/h2>/i, html);
         const h3s = extractAll(/<h3[^>]*>([\s\S]*?)<\/h3>/i, html).slice(0, 8);
 
-        // CTAs — scan ALL buttons and anchor tags
+        // CTAs — scan ALL buttons and anchor tags, no early limit
         const ctaKeywords = /book|buy|get|start|try|join|sign|subscribe|contact|appointment|order|shop|call|quote|free|now|today|view|explore|learn|discover/i;
         const allButtonMatches: string[] = [];
         const allAnchorTexts: string[] = [];
@@ -65,24 +66,17 @@ export async function POST(req: NextRequest) {
         const navSection = html.match(/<nav[^>]*>([\s\S]*?)<\/nav>/i)?.[1] || '';
         const navItems = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, navSection).slice(0, 12);
 
-        // FIX 1: Tighter phone regex — must be 7-15 digits, reject tracking IDs
-        // Strips all non-digit chars first, then checks length strictly
-        const rawPhones = html.match(/(\+\d[\d\s\-().]{4,17}\d|\b0\d[\d\s\-().]{4,17}\d)/g) || [];
-        const phones = rawPhones
+        // Phone numbers
+        const phones = (html.match(/(\+\d[\d\s\-()]{5,13}\d|0\d[\d\s\-()]{5,13}\d)/g) || [])
             .filter(p => {
-                const digits = p.replace(/\D/g, '');
-                // Must be 7-15 digits. Reject anything that looks like a tracking/pixel ID
-                // Tracking IDs tend to be exactly 10-19 raw digits with no spaces/formatting
-                if (digits.length < 7 || digits.length > 15) return false;
-                // Reject if the raw string has no spaces, dashes or brackets AND is over 10 digits
-                // (real phone numbers almost always have formatting; tracking IDs don't)
+                const d = p.replace(/\D/g,'');
+                if (d.length < 7 || d.length > 15) return false;
+                // Reject tracking/pixel IDs: no formatting chars AND over 10 digits
                 const hasFormatting = /[\s\-().+]/.test(p.trim());
-                if (!hasFormatting && digits.length > 10) return false;
+                if (!hasFormatting && d.length > 10) return false;
                 return true;
             })
-            .map(p => p.trim())
-            .filter((p, i, a) => a.indexOf(p) === i)
-            .slice(0, 3);
+            .map(p => p.trim()).filter((p,i,a) => a.indexOf(p)===i).slice(0, 3);
 
         // Emails
         const emails = html.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g)?.slice(0, 2) || [];
@@ -96,12 +90,10 @@ export async function POST(req: NextRequest) {
         const hasPrices = /rs\.?\s*[\d,]+|lkr|usd|\$|£|€|price|pricing/i.test(html);
         const hasTestimonials = /testimonial|review|client said|customer said|what.*say/i.test(html);
         const hasNamedTestimonials = /Google Review|Trustpilot|verified buyer/i.test(html);
-        // FIX 2: Capture review count more broadly to catch "4,000+ glowing Google reviews"
-        const reviewCountMatch = html.match(/([\d,]+\+?\s*(glowing\s*)?(google\s*)?(reviews?|ratings?|customers?|clients?))/i);
-        const hasReviewCount = reviewCountMatch?.[0] || '';
+        const hasReviewCount = html.match(/[\d,]+\+?\s*(glowing\s*)?(google\s*)?(reviews?|ratings?|customers?|clients?)/i)?.[0] || '';
         const hasCertification = /iso|certified|award|accredited/i.test(html);
         const hasWhatsapp = /whatsapp/i.test(html);
-        const hasLiveChat = /livechat|live.chat|tawk|intercom|drift|crisp|zendesk|openwidget/i.test(html);
+        const hasLiveChat = /livechat|live.chat|tawk|intercom|drift|crisp|zendesk/i.test(html);
         const hasVideo = /<video|youtube\.com\/embed|vimeo\.com/i.test(html);
         const hasGallery = /gallery|portfolio/i.test(html);
         const hasFaq = /faq|frequently asked/i.test(html);
@@ -114,10 +106,14 @@ export async function POST(req: NextRequest) {
             linkedin: /linkedin\.com/i.test(html),
         };
 
+        // Images — check for alt text coverage
         const totalImgs = (html.match(/<img/gi) || []).length;
         const imgsWithAlt = (html.match(/<img[^>]+alt=["'][^"']+["']/gi) || []).length;
+
+        // Structured data
         const hasSchema = /<script[^>]+type=["']application\/ld\+json["']/i.test(html);
 
+        // Extract visible above-fold text (first ~3000 chars of body content)
         const bodyStart = html.indexOf('<body');
         const bodyContent = bodyStart > -1 ? html.slice(bodyStart, bodyStart + 8000) : html.slice(0, 8000);
         const visibleText = bodyContent
@@ -131,17 +127,34 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
             ok: true,
             data: {
-                title, metaDesc, h1s, h2s, h3s, ctaButtons, ctaLinks, navItems,
-                phones, emails,
+                title,
+                metaDesc,
+                h1s,
+                h2s,
+                h3s,
+                ctaButtons,
+                ctaLinks,
+                navItems,
+                phones,
+                emails,
                 forms: { count: formCount, inputs: inputCount, textareas: textareaCount },
                 trust: {
-                    hasPrices, hasTestimonials, hasNamedTestimonials,
+                    hasPrices,
+                    hasTestimonials,
+                    hasNamedTestimonials,
                     reviewCount: hasReviewCount,
-                    hasCertification, hasWhatsapp, hasLiveChat,
-                    hasVideo, hasGallery, hasFaq, hasMap, social: socialLinks,
+                    hasCertification,
+                    hasWhatsapp,
+                    hasLiveChat,
+                    hasVideo,
+                    hasGallery,
+                    hasFaq,
+                    hasMap,
+                    social: socialLinks,
                 },
                 images: { total: totalImgs, withAlt: imgsWithAlt },
-                hasSchema, visibleText,
+                hasSchema,
+                visibleText,
             }
         });
 
