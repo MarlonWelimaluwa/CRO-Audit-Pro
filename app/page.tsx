@@ -99,32 +99,75 @@ export default function Home() {
     'Generating action plan...',
   ];
 
+  async function fetchPS(targetUrl: string, strategy: 'desktop' | 'mobile') {
+    const key = process.env.NEXT_PUBLIC_PAGESPEED_API_KEY || '';
+    const res = await fetch(
+        `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(targetUrl)}&strategy=${strategy}&category=performance&key=${key}`
+    );
+    if (!res.ok) throw new Error(`PageSpeed ${strategy} request failed (${res.status})`);
+    const d = await res.json();
+    if (d.error) throw new Error(`PageSpeed error: ${d.error.message}`);
+    return d;
+  }
+
+  function psScore(d: Record<string, unknown>): number {
+    const cats = ((d?.lighthouseResult as Record<string, unknown>)?.categories as Record<string, unknown>);
+    return Math.round(((cats?.performance as Record<string, unknown>)?.score as number || 0) * 100);
+  }
+  function psMetric(d: Record<string, unknown>, id: string): string {
+    const audits = ((d?.lighthouseResult as Record<string, unknown>)?.audits as Record<string, unknown>) || {};
+    return (audits[id] as Record<string, unknown>)?.displayValue as string || 'N/A';
+  }
+  function psOpps(d: Record<string, unknown>): string[] {
+    const audits = ((d?.lighthouseResult as Record<string, unknown>)?.audits as Record<string, unknown>) || {};
+    return Object.values(audits)
+        .filter((a) => (a as Record<string, unknown>).details && Number((a as Record<string, unknown>).score ?? 1) < 0.9)
+        .map((a) => (a as Record<string, unknown>).title as string)
+        .filter(Boolean).slice(0, 6);
+  }
+
   async function runAudit() {
     if (!url) { setError('Please enter a website URL.'); return; }
     let clean = url.trim();
     if (!clean.startsWith('http')) clean = 'https://' + clean;
     setLoading(true); setError(''); setResult(null); setLoadingStep(0);
     try {
-      // Step 1: PageSpeed (desktop + mobile) - dedicated fast route ~15s
+      // PageSpeed runs IN THE BROWSER — bypasses Vercel timeout completely
       setLoadingStep(0);
-      const speedRes = await fetch('/api/speed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: clean }),
-      });
-      const speedData = await speedRes.json();
-      if (!speedData.ok) throw new Error(speedData.error || 'PageSpeed fetch failed');
-
+      const [desktop, mobile] = await Promise.all([
+        fetchPS(clean, 'desktop'),
+        fetchPS(clean, 'mobile'),
+      ]);
       setLoadingStep(2);
 
-      // Step 2: AI Audit - receives speed data, runs Gemini only ~20s
-      const auditDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-      setLoadingStep(3);
+      const lhr = ((desktop?.lighthouseResult || {}) as Record<string, unknown>);
+      const audits = (lhr.audits as Record<string, unknown>) || {};
+      const pageTitle = ((audits['document-title'] as Record<string, unknown>)?.title as string) || '';
+      const hasHttps = clean.startsWith('https://');
 
+      const psData = {
+        desktopScore: psScore(desktop),
+        mobileScore:  psScore(mobile),
+        lcp:          psMetric(mobile, 'largest-contentful-paint'),
+        cls:          psMetric(mobile, 'cumulative-layout-shift'),
+        fcp:          psMetric(mobile, 'first-contentful-paint'),
+        ttfb:         psMetric(mobile, 'server-response-time'),
+        loadTime:     psMetric(mobile, 'interactive'),
+        pageSize:     psMetric(mobile, 'total-byte-weight'),
+        desktopLcp:   psMetric(desktop, 'largest-contentful-paint'),
+        desktopCls:   psMetric(desktop, 'cumulative-layout-shift'),
+        opportunities: psOpps(mobile),
+        pageTitle,
+        hasHttps,
+      };
+
+      // Step 2: Gemini audit — runs on Vercel, only ~20s, well within 60s limit
+      setLoadingStep(3);
+      const auditDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
       const auditRes = await fetch('/api/audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: clean, psData: speedData.data, auditDate }),
+        body: JSON.stringify({ url: clean, psData, auditDate }),
       });
       const auditData = await auditRes.json();
       setLoadingStep(4);
