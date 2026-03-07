@@ -66,17 +66,30 @@ export async function POST(req: NextRequest) {
         const navSection = html.match(/<nav[^>]*>([\s\S]*?)<\/nav>/i)?.[1] || '';
         const navItems = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, navSection).slice(0, 12);
 
-        // Phone numbers
-        const phones = (html.match(/(\+\d[\d\s\-()]{5,13}\d|0\d[\d\s\-()]{5,13}\d)/g) || [])
+        // Phone numbers — extract, normalise, deduplicate
+        // Strip tel: hrefs first to avoid double-counting e.g. tel:++94...
+        const htmlNoTel = html.replace(/tel:[^"'\s]*/gi, '');
+        const rawPhoneMatches = (htmlNoTel.match(/(\(?\+\d[\d\s\-()+]{5,14}\d|\b0\d[\d\s\-()]{5,13}\d)/g) || [])
+            .map(p => p.trim())
             .filter(p => {
-                const d = p.replace(/\D/g,'');
-                if (d.length < 7 || d.length > 15) return false;
-                // Reject tracking/pixel IDs: no formatting chars AND over 10 digits
-                const hasFormatting = /[\s\-().+]/.test(p.trim());
+                const d = p.replace(/\D/g, '');
+                if (d.length < 7 || d.length > 13) return false;
+                // Reject tracking/pixel IDs: pure digits with no formatting and >10 digits
+                const hasFormatting = /[\s\-().+]/.test(p.replace(/^\+/, ''));
                 if (!hasFormatting && d.length > 10) return false;
                 return true;
-            })
-            .map(p => p.trim()).filter((p,i,a) => a.indexOf(p)===i).slice(0, 3);
+            });
+        // Deduplicate by last-8-digit fingerprint (catches (+94) 11 799 9666 == +94 11 799 9666)
+        const seenPhoneDigits = new Set<string>();
+        const phones: string[] = [];
+        for (const p of rawPhoneMatches) {
+            const fp = p.replace(/\D/g, '').slice(-8);
+            if (!seenPhoneDigits.has(fp)) {
+                seenPhoneDigits.add(fp);
+                phones.push(p.replace(/^\(\+/, '+'));  // normalise (+94... to +94...
+            }
+            if (phones.length >= 3) break;
+        }
 
         // Emails
         const emails = html.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g)?.slice(0, 2) || [];
