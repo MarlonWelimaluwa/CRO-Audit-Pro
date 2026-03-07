@@ -287,36 +287,59 @@ export default function Home() {
         }
       }
 
-      // ── FIX 3: conversionImpact — replace any unfilled template placeholder ──
-      // Gemini sometimes outputs "$X,XXX - $XX,XXX" verbatim. Replace with a real estimate.
-      if (!parsed.conversionImpact || /\$X,XXX|\$X\.XXX|X,XXX|placeholder/i.test(parsed.conversionImpact)) {
+      // ── FIX 3 (A): conversionImpact — ALWAYS compute locally, never trust Gemini ──
+      // Gemini generates US-scale dollar figures for local businesses (e.g. $50K-$100K/month
+      // for a Colombo salon). Always overwrite with a metric-driven, currency-neutral estimate.
+      {
         const mScore = psData.mobileScore;
+        const dScore = psData.desktopScore;
         const abandonment = mScore < 50 ? '53%' : mScore < 70 ? '35%' : '15%';
         const recoverable = mScore < 50 ? '25-40%' : mScore < 70 ? '15-25%' : '10-15%';
-        parsed.conversionImpact = `With a mobile PageSpeed score of ${mScore}/100, roughly ${abandonment} of mobile visitors abandon before the page loads. Fixing Core Web Vitals to reach 80+ could recover ${recoverable} of that lost traffic. For a site receiving 1,000 visitors/month at a 2% conversion rate, that translates to an estimated 5-12 additional enquiries or bookings per month — without spending a single extra dollar on ads.`;
+        const speedGrade = mScore < 50 ? 'critically slow' : mScore < 70 ? 'below average' : 'moderate';
+        parsed.conversionImpact = `Your mobile speed is ${speedGrade} at ${mScore}/100 (desktop: ${dScore}/100), causing approximately ${abandonment} of mobile visitors to abandon before the page loads. Fixing Core Web Vitals to reach 80+ could recover ${recoverable} of that lost traffic. At 1,000 visitors/month with a 2% baseline conversion rate, that's an estimated 5-12 additional leads or bookings per month — without increasing ad spend.`;
       }
 
-      // ── FIX 4: Scrub hallucinated phone numbers from Gemini's audit text ────
-      // Gemini occasionally invents plausible phone numbers in the "Contact Info" found/problem fields.
-      // We validate any phone-like string in those fields against the real scraped phones list.
-      const realPhones = ((siteData as { phones?: string[] }).phones || [])
-          .map(p => p.replace(/\D/g, ''));
-      if (realPhones.length > 0) {
-        const phonePattern = /(\+?[\d][\d\s\-().]{6,}[\d])/g;
-        const scrubField = (text: string): string =>
-            text.replace(phonePattern, (match) => {
-              const digits = match.replace(/\D/g, '');
-              // Keep if it matches a real scraped phone (last 8 digits overlap)
-              const isReal = realPhones.some(rp =>
-                  rp.slice(-8) === digits.slice(-8) || digits.slice(-8) === rp.slice(-8)
-              );
-              return isReal ? match : '[phone number]';
-            });
-        const contactItem = (parsed.trustAudit as { item: string; found: string; problem: string }[])
+      // ── FIX 4 (B): Contact Info — hard-replace "found" with real scraped data only ──
+      // Gemini invents plausible-looking phone numbers. Instead of scrubbing, we rebuild
+      // the entire "found" field from the verified scraped data so hallucinations are impossible.
+      {
+        const sd4 = siteData as {
+          phones?: string[];
+          emails?: string[];
+          trust?: { hasWhatsapp?: boolean; hasLiveChat?: boolean };
+        };
+        const contactItem = (parsed.trustAudit as { item: string; status: string; found: string; problem: string; fix: string }[])
             ?.find(i => i.item === 'Contact Info');
         if (contactItem) {
-          contactItem.found = scrubField(contactItem.found);
-          contactItem.problem = scrubField(contactItem.problem);
+          const phonePart = (sd4.phones || []).length > 0 ? `Phone: ${sd4.phones!.join(', ')}` : 'Phone: None detected';
+          const emailPart = (sd4.emails || []).length > 0 ? `Email: ${sd4.emails!.join(', ')}` : 'Email: None detected';
+          const wpPart = sd4.trust?.hasWhatsapp ? 'WhatsApp: YES' : 'WhatsApp: NO';
+          const lcPart = sd4.trust?.hasLiveChat ? 'Live Chat: YES' : 'Live Chat: NO';
+          contactItem.found = `${phonePart} | ${emailPart} | ${wpPart} | ${lcPart}`;
+        }
+      }
+
+      // ── FIX 5 (C): Primary CTA + Mobile CTA — no FAIL if real CTAs exist on page ──
+      // Gemini can't render the page so it misses CTAs inside sliders/carousels and marks
+      // them as missing. If the scraper found any booking/call CTAs, downgrade FAIL → WARN.
+      {
+        const allCTAs = [...(s.ctaButtons || []), ...(s.ctaLinks || [])];
+        const hasBookingCTA = allCTAs.some(c => /appoint|book|call|whatsapp|reserv|contact/i.test(c));
+        if (hasBookingCTA) {
+          type AuditItem = { item: string; status: string; found: string; problem: string; fix: string };
+          const aboveFoldCTA = (parsed.aboveFoldAudit as AuditItem[])?.find(i => i.item === 'Primary CTA');
+          if (aboveFoldCTA && aboveFoldCTA.status === 'fail') {
+            aboveFoldCTA.status = 'warn';
+            aboveFoldCTA.found = `CTAs detected on page: ${allCTAs.slice(0, 5).join(', ')}`;
+            aboveFoldCTA.problem = 'CTAs exist but may lack prominence, urgency, or visual contrast above the fold. The primary CTA may be inside a slider/carousel that reduces its impact.';
+            aboveFoldCTA.fix = aboveFoldCTA.fix; // keep Gemini\'s fix advice — it\'s still valid
+          }
+          const mobileCTA = (parsed.mobileAudit as AuditItem[])?.find(i => i.item === 'Mobile CTA');
+          if (mobileCTA && mobileCTA.status === 'fail') {
+            mobileCTA.status = 'warn';
+            mobileCTA.found = `CTAs present: ${allCTAs.slice(0, 5).join(', ')}`;
+            mobileCTA.problem = 'CTAs are present but likely not sticky or prominent enough on mobile. No fixed bottom CTA bar detected.';
+          }
         }
       }
 
