@@ -176,20 +176,107 @@ export default function Home() {
         console.warn('Scrape failed, continuing:', e);
       }
 
-      // Step 3: Gemini audit — ONLY Gemini runs on Vercel now (~20s max)
+      // Step 3: Gemini runs IN THE BROWSER — zero Vercel timeout
       setLoadingStep(3);
       const auditDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-      const auditRes = await fetch('/api/audit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: clean, psData, siteData, auditDate }),
-      });
-      const auditData = await auditRes.json();
-      setLoadingStep(4);
+      const GEMINI_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+      if (!GEMINI_KEY) throw new Error('GEMINI API key not configured. Add NEXT_PUBLIC_GEMINI_API_KEY to Vercel env vars.');
 
-      if (!auditData.ok) throw new Error(auditData.error || 'Audit failed');
-      setResult(auditData.data);
+      const s = siteData as {
+        title?: string; metaDesc?: string; h1s?: string[]; h2s?: string[];
+        h3s?: string[]; ctaButtons?: string[]; ctaLinks?: string[]; navItems?: string[];
+        phones?: string[]; emails?: string[];
+        forms?: { count: number; inputs: number };
+        trust?: {
+          hasPrices?: boolean; hasTestimonials?: boolean; hasNamedTestimonials?: boolean;
+          reviewCount?: string; hasCertification?: boolean; hasWhatsapp?: boolean;
+          hasLiveChat?: boolean; hasVideo?: boolean; hasGallery?: boolean;
+          hasFaq?: boolean; social?: Record<string, boolean>;
+        };
+        images?: { total: number; withAlt: number };
+        hasSchema?: boolean; visibleText?: string;
+      };
+
+      // Build prompt inline — identical to server version, zero quality change
+      const allCtAs = [...(s.ctaButtons||[]), ...(s.ctaLinks||[])].filter((v,i,a)=>a.indexOf(v)===i).join(', ') || 'None detected';
+      const socialList = Object.entries(s.trust?.social || {}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'None';
+
+      const CRO_SYSTEM = 'You are the "CRO Audit Engine" \u2014 a world-class conversion rate optimisation expert with 15 years of experience auditing thousands of websites. You have generated millions of dollars in additional revenue for businesses by identifying exactly why visitors leave without converting.\n\nYou are BRUTALLY SPECIFIC. You never say "improve your CTA" \u2014 you say "your primary CTA button says \'Submit\' in grey on a white background \u2014 this is invisible and passive. Change it to \'Get My Free Quote Today\' in white on a high-contrast orange or green button, placed above the fold and repeated after every major section."\n\nYou identify the EXACT location of every problem. Not "your page has trust issues" but "there are zero testimonials visible above the fold, and the only social proof is a logos section buried 80% down the page that most visitors never reach."\n\nCRO MASTERY YOU APPLY TO EVERY AUDIT:\n\nABOVE THE FOLD: The headline must pass the 5-second test. Value prop must be specific not vague. Primary CTA visible without scrolling. Hero image shows outcome not stock photos. Social proof in hero = 34% more conversions.\n\nCTA PSYCHOLOGY: Action verbs + value + urgency. Button color 4.5:1 contrast minimum. One primary CTA per section. Micro-copy reduces anxiety. Min 44px tap targets. Sticky CTA bar increases conversions 22%.\n\nTRUST SIGNALS: Testimonials with name + photo + specific result outperform generic quotes 7x. Real numbers beat vague claims. Trust badges near CTA. Founder photo. Physical address + phone reduces bounce 14%. Live chat increases conversion 20%.\n\nMOBILE (70% of traffic): Buttons under 44px lose taps. Text under 16px forces zoom = exit. Horizontal scroll = broken. Pop-ups on mobile = Google penalty. Every extra form field = 10% fewer completions. 53% leave if load over 3 seconds.\n\nCOPY: Lead with outcome not process. Specificity builds trust. Grade 8 reading level. FAQ addresses top 5 objections. Urgency without lying. Headline formula: [Outcome] + [Timeframe] + [Objection Handle].\n\nPAGE STRUCTURE: F-pattern reading. Above fold: hook. Middle: proof. Bottom: CTA. Exit intent popup saves 15% of abandoning visitors. Every 1 second delay = 7% fewer conversions.\n\nOUTPUT: ONLY valid JSON. No markdown. No preamble. No explanation outside the JSON.';
+
+      const httpsStatus = psData.hasHttps ? 'pass' : 'fail';
+      const httpsFound = psData.hasHttps ? 'HTTPS enabled' : 'No HTTPS detected';
+      const httpsProblem = psData.hasHttps ? 'Site is secure' : 'No SSL certificate \u2014 browsers show scary warning destroying trust instantly';
+      const httpsFix = psData.hasHttps ? 'Maintain HTTPS on all resources including images and scripts' : 'Install SSL immediately via your host or Cloudflare free SSL \u2014 non-negotiable';
+      const mobileStatus = psData.mobileScore >= 80 ? 'pass' : psData.mobileScore >= 50 ? 'warn' : 'fail';
+      const mobileProblem = psData.mobileScore < 50 ? `Critical: mobile score ${psData.mobileScore}/100 means 53% of mobile visitors abandon before page loads` : psData.mobileScore < 80 ? `Mobile score ${psData.mobileScore}/100 below 80 target \u2014 losing significant mobile revenue` : 'Mobile speed is good';
+      const speedUxStatus = psData.mobileScore >= 80 ? 'pass' : psData.mobileScore >= 50 ? 'warn' : 'fail';
+      const speedFix = (psData.opportunities || [])[0] || 'compress images and remove render-blocking JS';
+      const avgSpeed = Math.round((psData.desktopScore + psData.mobileScore) / 2);
+
+      const userPrompt = `You are auditing this SPECIFIC website. Use ALL the real data scraped below \u2014 do NOT guess or use generic assumptions.\n\nURL: ${clean}\n\n=== REAL PAGE DATA (scraped live) ===\nPage Title: ${s.title || 'Not detected'}\nMeta Description: ${s.metaDesc || 'None'}\nH1 Headlines: ${(s.h1s || []).join(' | ') || 'None detected'}\nH2 Headlines: ${(s.h2s || []).join(' | ') || 'None detected'}\nH3 Headlines: ${(s.h3s || []).join(' | ') || 'None detected'}\nNavigation Items: ${(s.navItems || []).join(', ') || 'None detected'}\nCTA Buttons found: ${(s.ctaButtons || []).join(', ') || 'None detected'}\nCTA Links found: ${(s.ctaLinks || []).join(', ') || 'None detected'}\nALL CTAs combined (use this for assessment): ${allCtAs}\nPhone Numbers: ${(s.phones || []).join(', ') || 'None'}\nEmail Addresses: ${(s.emails || []).join(', ') || 'None'}\nForms on page: ${s.forms?.count || 0} forms, ${s.forms?.inputs || 0} input fields\nPrices shown: ${s.trust?.hasPrices ? 'YES' : 'NO'}\nTestimonials present: ${s.trust?.hasTestimonials ? 'YES' : 'NO'} | Named testimonials confirmed: ${s.trust?.hasNamedTestimonials ? 'YES - mark as PASS' : 'NO'}\nReview count mentioned: ${s.trust?.reviewCount || 'None'}\nCertification/Awards: ${s.trust?.hasCertification ? 'YES' : 'NO'}\nWhatsApp button: ${s.trust?.hasWhatsapp ? 'YES' : 'NO'}\nLive Chat: ${s.trust?.hasLiveChat ? 'YES' : 'NO'}\nVideo on page: ${s.trust?.hasVideo ? 'YES' : 'NO'}\nGallery present: ${s.trust?.hasGallery ? 'YES' : 'NO'}\nFAQ section: ${s.trust?.hasFaq ? 'YES' : 'NO'}\nSocial media: ${socialList}\nImages: ${s.images?.total || 0} total, ${s.images?.withAlt || 0} with alt text\nSchema markup: ${s.hasSchema ? 'YES' : 'NO'}\nAbove-fold visible text: ${s.visibleText?.slice(0, 500) || 'Not extracted'}\n\n=== PAGESPEED DATA (real from Google API) ===\nHTTPS: ${psData.hasHttps ? 'YES - Secure' : 'NO - Critical trust issue'}\nDesktop PageSpeed: ${psData.desktopScore}/100\nMobile PageSpeed: ${psData.mobileScore}/100\nMobile LCP: ${psData.lcp} | CLS: ${psData.cls} | FCP: ${psData.fcp}\nDesktop LCP: ${psData.desktopLcp} | Desktop CLS: ${psData.desktopCls}\nLoad Time: ${psData.loadTime} | Page Size: ${psData.pageSize}\nPageSpeed issues: ${(psData.opportunities || []).slice(0,4).join('; ')}\n\nCRITICAL RULES:\n- Base EVERY finding on the real scraped data above\n- If H1 is "The Home Of Care" \u2014 say that, don't invent a different headline\n- If testimonials ARE present \u2014 mark as pass, describe what's there\n- If phone numbers ARE present \u2014 mark contact info as pass\n- If CTAs ARE present \u2014 describe the actual CTA copy found\n- ONLY flag something as missing if the scraped data confirms it is absent\n- Industry must be detected from the actual title, H1s and content \u2014 not guessed from domain name\n\nReturn ONLY valid JSON (no markdown, no extra text):\n{"url":"${clean}","auditDate":"${auditDate}","pageTitle":"${psData.pageTitle || 'Unknown'}","industry":"detect from URL and title","overallScore":50,"grade":"F","speedScore":${avgSpeed},"trustScore":45,"mobileScore":${psData.mobileScore},"uxScore":45,"copyScore":45,"ctaScore":40,"summary":"2-3 brutally specific sentences using real numbers desktop:${psData.desktopScore} mobile:${psData.mobileScore} LCP:${psData.lcp}","conversionImpact":"specific revenue estimate","speedMetrics":{"desktop":${psData.desktopScore},"mobile":${psData.mobileScore},"lcp":"${psData.lcp}","cls":"${psData.cls}","fcp":"${psData.fcp}","ttfb":"${psData.ttfb}","loadTime":"${psData.loadTime}","pageSize":"${psData.pageSize}","desktopLcp":"${psData.desktopLcp}","desktopCls":"${psData.desktopCls}"},"criticalIssues":[{"title":"most critical conversion killer","where":"exact location","impact":"specific % impact","fix":"exact fix"},{"title":"second issue","where":"exact location","impact":"specific impact","fix":"exact fix"},{"title":"third issue","where":"exact location","impact":"specific impact","fix":"exact fix"}],"aboveFoldAudit":[{"item":"Headline Clarity","status":"fail","found":"real H1 from scraped data","problem":"specific problem","fix":"specific fix with example rewrite"},{"item":"Value Proposition","status":"warn","found":"what detected","problem":"specific problem","fix":"specific fix"},{"item":"Primary CTA","status":"fail","found":"exact CTAs found on page","problem":"specific problem","fix":"exact copy and placement fix"},{"item":"Hero Visual","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Navigation","status":"warn","found":"list nav items found","problem":"specific problem","fix":"specific fix"}],"ctaAudit":[{"item":"CTA Copy","status":"fail","found":"exact CTA text found","problem":"specific problem","fix":"exact copy to use instead"},{"item":"CTA Design","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"CTA Placement","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Anxiety Reducers","status":"fail","found":"none detected","problem":"no friction-reducing microcopy below CTA","fix":"add: No credit card required / Free consultation / Cancel anytime"},{"item":"Form Fields","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"}],"trustAudit":[{"item":"Testimonials","status":"fail","found":"what detected","problem":"specific problem","fix":"specific fix"},{"item":"Social Proof","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Trust Badges","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Contact Info","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"HTTPS","status":"${httpsStatus}","found":"${httpsFound}","problem":"${httpsProblem}","fix":"${httpsFix}"}],"mobileAudit":[{"item":"Mobile Speed","status":"${mobileStatus}","found":"Mobile: ${psData.mobileScore}/100 Desktop: ${psData.desktopScore}/100 LCP: ${psData.lcp}","problem":"${mobileProblem}","fix":"Compress all images to WebP under 100KB, enable lazy loading, remove unused JavaScript. Target LCP under 2.5s"},{"item":"Touch Targets","status":"warn","found":"assessment","problem":"specific problem on this type of site","fix":"minimum 44px height on all buttons and links"},{"item":"Mobile Navigation","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Mobile Forms","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Mobile CTA","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"}],"copyAudit":[{"item":"Headline","status":"warn","found":"${psData.pageTitle || 'not detected'}","problem":"specific headline problem","fix":"rewrite: [Outcome] + [Timeframe] + [Objection Handle] example"},{"item":"Benefits vs Features","status":"warn","found":"assessment","problem":"specific problem","fix":"before/after rewrite example"},{"item":"Specificity","status":"warn","found":"assessment","problem":"vague claims without proof numbers","fix":"specific numbers to add"},{"item":"Objections","status":"fail","found":"FAQ: NO","problem":"top buyer objections not addressed","fix":"top 5 FAQs for this industry"},{"item":"Urgency","status":"warn","found":"none detected","problem":"no urgency triggers","fix":"honest urgency copy examples"}],"uxAudit":[{"item":"Speed UX Impact","status":"${speedUxStatus}","found":"Mobile LCP: ${psData.lcp} CLS: ${psData.cls} Size: ${psData.pageSize}","problem":"specific user behaviour impact","fix":"${speedFix}"},{"item":"Visual Hierarchy","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Readability","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Content Flow","status":"warn","found":"assessment","problem":"specific problem","fix":"specific fix"},{"item":"Exit Intent","status":"fail","found":"none detected","problem":"zero exit intent \u2014 100% of abandoning visitors lost","fix":"add exit popup with lead magnet \u2014 saves 15% of abandoning visitors"}],"topFixes":["Fix 1 specific to this site","Fix 2 specific to this site","Fix 3 specific to this site","Fix 4 specific to this site","Fix 5 specific to this site"],"actionPlan":{"today":["specific action 1","specific action 2","specific action 3"],"thisWeek":["specific action 1","specific action 2","specific action 3"],"thisMonth":["specific action 1","specific action 2","specific action 3"]},"passed":[{"item":"something genuinely good","why":"specific reason this helps conversion"}]}`;
+
+      // Call Gemini directly from browser — no Vercel, no timeout
+      let parsed: CROData | null = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  systemInstruction: { parts: [{ text: CRO_SYSTEM }] },
+                  contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+                  generationConfig: { temperature: 0.2, maxOutputTokens: 8000 },
+                }),
+              }
+          );
+          const geminiData = await geminiRes.json();
+          if (geminiData.error) {
+            const msg = geminiData.error.message || '';
+            if ((msg.toLowerCase().includes('overloaded') || msg.toLowerCase().includes('high demand')) && attempt < 3) {
+              await new Promise(r => setTimeout(r, 3000 * attempt));
+              continue;
+            }
+            throw new Error('Gemini error: ' + msg);
+          }
+          const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (!rawText) throw new Error('Empty Gemini response');
+          // Clean JSON
+          let cleaned = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+          const start = cleaned.indexOf('{');
+          const end = cleaned.lastIndexOf('}');
+          if (start === -1 || end === -1) throw new Error('No JSON in Gemini response');
+          cleaned = cleaned.slice(start, end + 1).replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+          parsed = JSON.parse(cleaned) as CROData;
+          break;
+        } catch (e) {
+          if (attempt === 3) throw e;
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+        }
+      }
+      if (!parsed) throw new Error('Gemini failed after all retries');
+
+      // Hard override with real PageSpeed data
+      parsed.speedMetrics = {
+        desktop: psData.desktopScore, mobile: psData.mobileScore,
+        lcp: psData.lcp, cls: psData.cls, fcp: psData.fcp,
+        ttfb: psData.ttfb, loadTime: psData.loadTime, pageSize: psData.pageSize,
+      };
+      parsed.speedScore = Math.round((psData.desktopScore + psData.mobileScore) / 2);
+      parsed.mobileScore = psData.mobileScore;
+      parsed.url = clean;
+      parsed.auditDate = auditDate;
+      parsed.overallScore = Math.round(
+          (parsed.speedScore + (parsed.trustScore||45) + parsed.mobileScore + (parsed.uxScore||45) + (parsed.copyScore||45) + (parsed.ctaScore||40)) / 6
+      );
+      const sc = parsed.overallScore;
+      parsed.grade = sc >= 90 ? 'A' : sc >= 80 ? 'B' : sc >= 70 ? 'C' : sc >= 60 ? 'D' : 'F';
+
+      setLoadingStep(4);
+      setResult(parsed);
       setActiveTab('overview');
+
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Audit failed. Check the URL and try again.');
     }
