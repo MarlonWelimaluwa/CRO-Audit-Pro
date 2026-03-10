@@ -28,8 +28,6 @@ export async function POST(req: NextRequest) {
             .replace(/<[^>]+>/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
-        const isJSRendered = strippedBody.length < 200;
-
         function extract(pattern: RegExp, src: string, group = 1): string {
             const m = src.match(pattern);
             return m ? m[group].replace(/<[^>]+>/g, '').trim() : '';
@@ -91,6 +89,10 @@ export async function POST(req: NextRequest) {
         }
         const navItems = extractAll(/<a[^>]*>([\s\S]*?)<\/a>/i, bestNavSection).slice(0, 12);
 
+        // Only flag as JS-rendered if body is thin AND we got no headings/nav
+        // (WordPress/Wix sites can have short strippedBody but still return real h1s/nav)
+        const isJSRendered = strippedBody.length < 200 && h1s.length === 0 && h2s.length === 0 && navItems.length === 0;
+
         // ISSUE #8 FIX: Strip Wix/CDN asset URLs before phone extraction
         const htmlNoAssets = html
             .replace(/https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp|svg|woff|woff2|ttf|eot|css|js|json)[^\s"'<>]*/gi, '')
@@ -101,7 +103,15 @@ export async function POST(req: NextRequest) {
         const htmlNoTel = htmlNoAssets.replace(/tel:[^\s"'<>]*/gi, '');
 
         const rawPhoneMatches = (htmlNoTel.match(/(\(?\+\d[\d\s\-()+]{5,14}\d|\b0\d[\d\s\-()]{5,13}\d)/g) || [])
-            .filter(p => { const d = p.replace(/\D/g, ''); return d.length >= 7 && d.length <= 15; })
+            .filter(p => {
+                const d = p.replace(/\D/g, '');
+                if (d.length < 7 || d.length > 15) return false;
+                // Reject Wix/CDN dimension fragments: patterns like +0401, +0451 (start with +0)
+                if (/^\(?\+0\d/.test(p.trim())) return false;
+                // Reject strings that are purely 4-digit chunks (image dimensions w_0401)
+                if (/^\+?\d{3,4}-\d{3}$/.test(p.trim())) return false;
+                return true;
+            })
             .map(p => p.trim());
 
         // Deduplicate by last-8-digit fingerprint
@@ -117,9 +127,10 @@ export async function POST(req: NextRequest) {
             if (phones.length >= 3) break;
         }
 
-        // ISSUE #1 FIX: Dedup emails
+        // Filter out internal/tracking emails (Sentry, Wix, Google Tag Manager, etc.)
+        const internalEmailDomains = /wixpress\.com|sentry\.io|sentry-next|googletagmanager\.com|facebook\.com|doubleclick\.net|analytics\.google|amplitude\.com|hotjar\.com|intercom\.io|segment\.com/i;
         const rawEmails = html.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
-        const emails = [...new Set(rawEmails)].slice(0, 2);
+        const emails = [...new Set(rawEmails.filter(e => !internalEmailDomains.test(e)))].slice(0, 2);
 
         const formCount = (html.match(/<form/gi) || []).length;
         const inputCount = (html.match(/<input/gi) || []).length;
@@ -145,7 +156,8 @@ export async function POST(req: NextRequest) {
         const socialLinks = {
             facebook:  /facebook\.com\/(pages\/|profile\.php\?|[a-zA-Z0-9.]{3,}\/)/i.test(html),
             instagram: /instagram\.com\/[a-zA-Z0-9._]{2,}/i.test(html),
-            twitter:   /(?:twitter|x)\.com\/(?!intent\/|share\?|hashtag)[a-zA-Z0-9_]{2,}/i.test(html),
+            // Twitter: only count if there's an actual <a href> link to a profile, not a share button or script
+            twitter:   /<a[^>]+href=["'][^"']*(?:twitter|x)\.com\/(?!intent\/|share\?|hashtag)[a-zA-Z0-9_]{2,}/i.test(html),
             youtube:   /youtube\.com\/(channel\/|c\/|user\/|@)[a-zA-Z0-9_\-]{2,}/i.test(html),
             linkedin:  /linkedin\.com\/(company|in)\/[a-zA-Z0-9_\-]{2,}/i.test(html),
         };
