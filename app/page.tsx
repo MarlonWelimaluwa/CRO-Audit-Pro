@@ -590,7 +590,7 @@ Return ONLY valid JSON:
     function sectionHeader(title: string) {
       currentSection = title;
       const remaining = H - 20 - y;
-      if (y <= 20 || remaining < 80) {
+      if (y < 30 || remaining < 80) {
         doc.addPage(); y = M;
         drawPageHeader(title);
       } else {
@@ -666,7 +666,13 @@ Return ONLY valid JSON:
 
     allSections.forEach(section => {
       if (!section.items?.length) return;
-      sectionHeader(section.title);
+      // inline sub-header — only new page if < 40mm remaining
+      cy(12);
+      doc.setFillColor(15, 20, 45); doc.roundedRect(M, y, CW, 8, 1, 1, 'F');
+      doc.setFillColor(249, 115, 22); doc.rect(M, y, 3, 8, 'F');
+      doc.setTextColor(249, 115, 22); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+      doc.text(section.title, M + 7, y + 5.8);
+      y += 12;
 
       section.items.forEach(item => {
         const col = stc(item.status);
