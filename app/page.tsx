@@ -323,7 +323,7 @@ Return ONLY valid JSON:
                 body: JSON.stringify({
                   systemInstruction: { parts: [{ text: CRO_SYSTEM }] },
                   contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-                  generationConfig: { temperature: 0.2, maxOutputTokens: 8000 },
+                  generationConfig: { temperature: 0.2, maxOutputTokens: 16000 },
                 }),
               }
           );
