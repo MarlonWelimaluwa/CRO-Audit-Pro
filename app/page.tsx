@@ -475,7 +475,7 @@ Return ONLY valid JSON:
           });
     }
     function np() { doc.addPage(); y = M; }
-    function cy(n: number) { if (y + n > H - 20) np(); }
+    function cy(n: number) { if (y + n > H - 20) npWithHeader(); }
     function wrap(t: string, w: number, fs: number): string[] { doc.setFontSize(fs); return doc.splitTextToSize(clean(t), w); }
     function sc(s: number): [number, number, number] { return s >= 80 ? [16, 185, 129] : s >= 60 ? [245, 158, 11] : [239, 68, 68]; }
     function stc(s: string): [number, number, number] { return (s === 'pass' || s === 'good') ? [16, 185, 129] : s === 'warn' ? [245, 158, 11] : [239, 68, 68]; }
@@ -572,12 +572,42 @@ Return ONLY valid JSON:
       doc.text(clean(r.url), W - M, H - 3, { align: 'right' });
     }
 
-    // ── PAGE 2: CRITICAL ISSUES + TOP FIXES ──
-    np();
-    doc.setFillColor(249, 115, 22); doc.rect(0, 0, W, 13, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-    doc.text('CRITICAL CONVERSION KILLERS', M, 9.5);
-    y = 20;
+    // ── currentSection tracks active section for continuation headers ──
+    let currentSection = '';
+
+    function drawPageHeader(title: string) {
+      doc.setFillColor(249, 115, 22); doc.rect(0, 0, W, 13, 'F');
+      doc.setTextColor(255, 255, 255); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+      doc.text(title, M, 9.5);
+      y = 20;
+    }
+
+    function npWithHeader() {
+      doc.addPage(); y = M;
+      if (currentSection) drawPageHeader(currentSection + ' (continued)');
+    }
+
+    function sectionHeader(title: string) {
+      currentSection = title;
+      const remaining = H - 20 - y;
+      if (y <= 20 || remaining < 80) {
+        doc.addPage(); y = M;
+        drawPageHeader(title);
+      } else {
+        y += 6;
+        if (y + 12 > H - 20) { doc.addPage(); y = M; drawPageHeader(title); return; }
+        doc.setFillColor(15, 20, 45); doc.roundedRect(M, y, CW, 8, 1, 1, 'F');
+        doc.setFillColor(249, 115, 22); doc.rect(M, y, 3, 8, 'F');
+        doc.setTextColor(249, 115, 22); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+        doc.text(title, M + 7, y + 5.8);
+        y += 12;
+      }
+    }
+
+    // ── CRITICAL ISSUES + TOP FIXES ──
+    currentSection = 'CRITICAL CONVERSION KILLERS';
+    doc.addPage(); y = M;
+    drawPageHeader('CRITICAL CONVERSION KILLERS');
 
     r.criticalIssues?.forEach((issue, idx) => {
       const whereL = wrap('WHERE: ' + (issue.where || ''), CW - 16, 7.5);
@@ -620,12 +650,10 @@ Return ONLY valid JSON:
       y += bh + 3;
     });
 
-    // ── PAGE 3: FULL AUDIT ──
-    np();
-    doc.setFillColor(249, 115, 22); doc.rect(0, 0, W, 13, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-    doc.text('FULL CONVERSION AUDIT', M, 9.5);
-    y = 20;
+    // ── FULL CONVERSION AUDIT — smart section packing ──
+    currentSection = 'FULL CONVERSION AUDIT';
+    doc.addPage(); y = M;
+    drawPageHeader('FULL CONVERSION AUDIT');
 
     const allSections = [
       { title: 'ABOVE THE FOLD', items: r.aboveFoldAudit },
@@ -638,12 +666,7 @@ Return ONLY valid JSON:
 
     allSections.forEach(section => {
       if (!section.items?.length) return;
-      cy(14);
-      doc.setFillColor(15, 20, 45); doc.roundedRect(M, y, CW, 8, 1, 1, 'F');
-      doc.setFillColor(249, 115, 22); doc.rect(M, y, 3, 8, 'F');
-      doc.setTextColor(249, 115, 22); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
-      doc.text(section.title, M + 7, y + 5.8);
-      y += 12;
+      sectionHeader(section.title);
 
       section.items.forEach(item => {
         const col = stc(item.status);
@@ -678,12 +701,10 @@ Return ONLY valid JSON:
       y += 4;
     });
 
-    // ── PAGE 4: ACTION PLAN ──
-    np();
-    doc.setFillColor(249, 115, 22); doc.rect(0, 0, W, 13, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-    doc.text('ACTION PLAN', M, 9.5);
-    y = 20;
+    // ── ACTION PLAN ──
+    currentSection = 'ACTION PLAN';
+    doc.addPage(); y = M;
+    drawPageHeader('ACTION PLAN');
 
     // Speed metrics box
     doc.setFillColor(12, 16, 35); doc.roundedRect(M, y, CW, 28, 3, 3, 'F');
